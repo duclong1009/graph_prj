@@ -36,14 +36,8 @@ class GraphAttentionLayer(nn.Module):
             return h_prime
 
     def _prepare_attentional_mechanism_input(self, Wh):
-        # Wh.shape (N, out_feature)
-        # self.a.shape (2 * out_feature, 1)
-        # Wh1&2.shape (N, 1)
-        # e.shape (N, N)
         Wh1 = self.w1(Wh)
         Wh2 = self.w2(Wh)
-
-
         # broadcast add
         e = Wh1 + Wh2.T
         return self.leakyrelu(e)

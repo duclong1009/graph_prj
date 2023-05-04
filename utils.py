@@ -4,6 +4,8 @@ import torch
 import torch.nn.init as init
 import torch.nn as nn
 from models import GAT, SpGAT
+import os
+
 def encode_onehot(labels):
     # The classes must be sorted before encoding to enable static class encoding.
     # In other words, make sure the first class always maps to index 0.
@@ -12,50 +14,101 @@ def encode_onehot(labels):
     labels_onehot = np.array(list(map(classes_dict.get, labels)), dtype=np.int32)
     return labels_onehot
 
+def encode_labels(labels):
+    classes = {c: i for i, c in enumerate(np.unique(labels))}
+    return torch.LongTensor(list(map(classes.get, labels)))
 
-def load_data(path="./data/cora/", dataset="cora"):
+def create_adj(edges, shape):
+    adj = sp.coo_matrix((np.ones(edges.shape[0]), edges.T), shape=shape, dtype=np.float32)
+    return adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
+
+def load_data(path="./data/citeseer/", dataset="cora"):
+    
     """Load citation network dataset (cora only for now)"""
     print('Loading {} dataset...'.format(dataset))
+    if dataset =="cora":
+        idx_features_labels = np.genfromtxt("{}{}.content".format(path, dataset), dtype=np.dtype(str))
 
-    idx_features_labels = np.genfromtxt("{}{}.content".format(path, dataset), dtype=np.dtype(str))
-    features = sp.csr_matrix(idx_features_labels[:, 1:-1], dtype=np.float32)
-    labels = encode_onehot(idx_features_labels[:, -1])
+        features = sp.csr_matrix(idx_features_labels[:, 1:-1], dtype=np.float32)
+        
 
-    # build graph
-    idx = np.array(idx_features_labels[:, 0], dtype=np.int32)
-    idx_map = {j: i for i, j in enumerate(idx)}
-    edges_unordered = np.genfromtxt("{}{}.cites".format(path, dataset), dtype=np.int32)
-    edges = np.array(list(map(idx_map.get, edges_unordered.flatten())), dtype=np.int32).reshape(edges_unordered.shape)
+        labels = encode_onehot(idx_features_labels[:, -1])
+        idx = np.array(idx_features_labels[:, 0], dtype=np.int32)
+        idx_map = {j: i for i, j in enumerate(idx)}
+        edges_unordered = np.genfromtxt("{}{}.cites".format(path, dataset), dtype=np.int32)
+        edges = np.array(list(map(idx_map.get, edges_unordered.flatten())), dtype=np.int32).reshape(edges_unordered.shape)
+        features = normalize_features(features)
+        features = torch.FloatTensor(np.array(features.todense()))
+        labels = torch.LongTensor(np.where(labels)[1])
+    elif dataset == "citeseer":
+        from torch_geometric.datasets import Planetoid
+        cite_data = Planetoid(root="data/", name="CiteSeer")
+        cite_data = cite_data[0]
+        labels = cite_data.y
+        features = cite_data.x.numpy()
+        edges = cite_data.edge_index.numpy().T
+        features = torch.FloatTensor(np.array(features))
+    
     adj = sp.coo_matrix((np.ones(edges.shape[0]), (edges[:, 0], edges[:, 1])), shape=(labels.shape[0], labels.shape[0]), dtype=np.float32)
-
     # build symmetric adjacency matrix
     adj = adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
-
-    features = normalize_features(features)
     adj = normalize_adj(adj + sp.eye(adj.shape[0]))
-
-    idx_train = range(140)
-    idx_val = range(200, 500)
-    idx_test = range(500, 1500)
-
+    if dataset == "cora":
+        idx_train = range(140)
+        idx_val = range(200, 500)
+        idx_test = range(500, 1500)
+    elif dataset == "citeseer":
+        idx_train = torch.LongTensor(range(120))
+        idx_val = torch.LongTensor(range(120, 620))
+        idx_test = torch.LongTensor(range(2312, 3312))
+    # breakpoint()
     adj = torch.FloatTensor(np.array(adj.todense()))
-    features = torch.FloatTensor(np.array(features.todense()))
-    labels = torch.LongTensor(np.where(labels)[1])
-
     idx_train = torch.LongTensor(idx_train)
     idx_val = torch.LongTensor(idx_val)
     idx_test = torch.LongTensor(idx_test)
-
+    # breakpoint()
     return adj, features, labels, idx_train, idx_val, idx_test
 
 
 def normalize_adj(mx):
     """Row-normalize sparse matrix"""
+    # breakpoint()
     rowsum = np.array(mx.sum(1))
     r_inv_sqrt = np.power(rowsum, -0.5).flatten()
     r_inv_sqrt[np.isinf(r_inv_sqrt)] = 0.
     r_mat_inv_sqrt = sp.diags(r_inv_sqrt)
     return mx.dot(r_mat_inv_sqrt).transpose().dot(r_mat_inv_sqrt)
+
+
+# def normalize_adj(mx, sparse=False):  # A_hat = DAD
+#     rowsum = np.array(mx.sum(1))
+#     r_inv_sqrt = np.power(rowsum, -0.5).flatten()
+#     r_inv_sqrt[np.isinf(r_inv_sqrt)] = 0.
+#     r_mat_inv_sqrt = sp.diags(r_inv_sqrt)
+#     mx_to = mx.dot(r_mat_inv_sqrt).transpose().dot(r_mat_inv_sqrt)
+
+#     if sparse:
+#         mx_to = mx_to.tocoo()
+#         indices = torch.LongTensor([mx_to.row.tolist(), mx_to.col.tolist()])
+#         values = torch.Tensor(mx_to.data)
+#         return torch.sparse.FloatTensor(indices, values)
+#     else:
+#         return torch.FloatTensor(mx_to.todense())
+    
+# def normalize_features(mx, sparse=False):
+#     rowsum = np.array(mx.sum(1))
+#     r_inv = np.power(rowsum, -1).flatten()
+#     r_inv[np.isinf(r_inv)] = 0.
+#     r_mat_inv = sp.diags(r_inv)
+#     mx_to = r_mat_inv.dot(mx)
+
+#     if sparse:
+#         mx_to = mx_to.tocoo()
+#         indices = torch.LongTensor([mx_to.row.tolist(), mx_to.col.tolist()])
+#         values = torch.Tensor(mx_to.data)
+#         return torch.sparse.FloatTensor(indices, values)
+#     else:
+#         return torch.FloatTensor(mx_to.todense())
 
 
 def normalize_features(mx):
@@ -163,6 +216,7 @@ def get_args():
     parser.add_argument('--alpha', type=float, default=0.2, help='Alpha for the leaky_relu.')
     parser.add_argument('--patience', type=int, default=100, help='Patience')
     parser.add_argument('--dataset', type=str, help="The name of dataset", default= 'cora')
+    parser.add_argument('--path',type=str, default='data/cora/')
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     return args
@@ -204,12 +258,12 @@ def train_fn(epoch, model, optimizer, features, adj, labels, idx_train, idx_val,
 
     loss_val = F.nll_loss(output[idx_val], labels[idx_val])
     acc_val = accuracy(output[idx_val], labels[idx_val])
-    print('Epoch: {:04d}'.format(epoch+1),
-          'loss_train: {:.4f}'.format(loss_train.data.item()),
-          'acc_train: {:.4f}'.format(acc_train.data.item()),
-          'loss_val: {:.4f}'.format(loss_val.data.item()),
-          'acc_val: {:.4f}'.format(acc_val.data.item()),
-          'time: {:.4f}s'.format(time.time() - t))
+    # print('Epoch: {:04d}'.format(epoch+1),
+    #       'loss_train: {:.4f}'.format(loss_train.data.item()),
+    #       'acc_train: {:.4f}'.format(acc_train.data.item()),
+    #       'loss_val: {:.4f}'.format(loss_val.data.item()),
+    #       'acc_val: {:.4f}'.format(acc_val.data.item()),
+    #       'time: {:.4f}s'.format(time.time() - t))
 
     return loss_train.data.item(), loss_val.data.item(),  acc_train.data.item(), acc_val.data.item()
 import torch.nn.functional as F

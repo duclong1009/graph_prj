@@ -25,7 +25,7 @@ if __name__ == '__main__':
     seed(args.seed)
 
     # Load data
-    adj, features, labels, idx_train, idx_val, idx_test = load_data(dataset = args.dataset)
+    adj, features, labels, idx_train, idx_val, idx_test = load_data(path=args.path, dataset = args.dataset)
     args.features = features
     args.labels = labels
 

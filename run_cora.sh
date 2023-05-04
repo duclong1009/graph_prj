@@ -1,0 +1,1 @@
+python train.py --epochs 10000 --dataset cora --path data/cora/
